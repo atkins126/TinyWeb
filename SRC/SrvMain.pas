@@ -1112,6 +1112,7 @@ function FindExecutableCached(const LocalFName, sPath: AnsiString; var s: AnsiSt
 var
   i: Integer;
   c: TExecutableCache;
+  p: Pointer;
 begin
   if (LocalFName = '') or (sPath = '') then
   begin
@@ -1121,7 +1122,8 @@ begin
   ExecutableCache.Enter;
   if ExecutableCache.Search(@LocalFName, i) then
   begin
-    c := ExecutableCache[i];
+    p := ExecutableCache[i];
+    c := TExecutableCache(p);
     s := StrAsg(c.sResult);
     Result := c.ReturnValue;
   end else
@@ -1193,12 +1195,14 @@ var
   Found: Boolean;
   I: Integer;
   c: TRootCache;
+  p: Pointer;
 begin
   RootCacheColl.Enter;
   Found := RootCacheColl.Search(@AURI, I);
   if Found then
   begin
-    c := RootCacheColl[i];
+    p := RootCacheColl[i];
+    c := TRootCache(p);
     IsCGI := c.IsCGI;
     Result := StrAsg(c.FResult);
   end;
@@ -1270,12 +1274,13 @@ var
   ParentDir, Dir, FName: AnsiString;
   fa: DWORD;
 begin
+  Result := False;
+
   ParentDir := AFName;
   repeat
     Dir := ExtractFileDir(ParentDir);
     if (Dir = ParentDir) or (not (Length(Dir) < Length(ParentDir))) then
     begin
-      Result := False;
       Break;
     end;
 
@@ -1288,26 +1293,23 @@ begin
     FName := ExtractFileName(ParentDir);
     if (FName <> '') and (not FileIsRegular(FName)) then
     begin
-      Result := False;
       Break;
     end;
     if Dir = '' then
     begin
-      fa := INVALID_HANDLE_VALUE;
+      fa := INVALID_VALUE;
     end else
     begin
       fa := GetFileAttributesA(@(Dir[1]));
     end;
-    if fa = INVALID_HANDLE_VALUE then
+    if fa = INVALID_VALUE then
     begin
-      Result := False;
       Break;
     end;
     if ((fa and FILE_ATTRIBUTE_DIRECTORY) = 0) or
        ((fa and FILE_ATTRIBUTE_HIDDEN) <> 0) or
        ((fa and FILE_ATTRIBUTE_SYSTEM) <> 0) then
     begin
-      Result := False;
       Break;
     end;
     ParentDir := Dir;
@@ -2075,6 +2077,11 @@ var
   InstBlockList: PInstanceBlock;
   InstFreeList: PObjectInstance;
 
+{$IFDEF FPC}
+{$ASMMODE Intel}
+{$ENDIF}
+
+
 { Standard window procedure }
 { In    ECX = Address of method pointer }
 { Out   EAX = Result }
@@ -2166,7 +2173,7 @@ begin
   UtilWindowClass.lpfnWndProc := @DefWindowProc;
   ClassRegistered := GetClassInfo(HInstance, UtilWindowClass.lpszClassName,
     TempClass);
-  if not ClassRegistered or (TempClass.lpfnWndProc <> @DefWindowProc) then
+  if not ClassRegistered or ({$IFDEF FPC_DELPHI}@{$ENDIF}TempClass.lpfnWndProc <> @DefWindowProc) then
   begin
     if ClassRegistered then
       Windows.UnregisterClass(UtilWindowClass.lpszClassName, HInstance);
@@ -2180,11 +2187,12 @@ end;
 
 procedure DeallocateHWnd(Wnd: HWND);
 var
-  Instance: Pointer;
+  DefAddr, Instance: Pointer;
 begin
   Instance := Pointer(GetWindowLong(Wnd, GWL_WNDPROC));
   DestroyWindow(Wnd);
-  if Instance <> @DefWindowProc then FreeObjectInstance(Instance);
+  DefAddr := @DefWindowProc;
+  if Instance <> DefAddr then FreeObjectInstance(Instance);
 end;
 
 type
@@ -2308,7 +2316,7 @@ var
   WP: TWndProc;
 begin
   WP := TWndProc.Create;
-  WP.Handle := AllocateHWnd(WP.WndProc);
+  WP.Handle := AllocateHWnd({$IFDEF FPC_OBJFPC}@{$ENDIF}WP.WndProc);
   repeat
     GetMessage(M, 0, 0, 0);
     if M.Message = WM_QUIT then
@@ -2411,5 +2419,3 @@ begin
 end;
 
 end.
-
-
