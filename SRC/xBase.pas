@@ -1,9 +1,9 @@
 //////////////////////////////////////////////////////////////////////////
 //
 // TinyWeb
+// Copyright (C) 2021-2023 Maxim Masiutin
 // Copyright (C) 1997-2000 RIT Research Labs
 // Copyright (C) 2000-2017 RITLABS S.R.L.
-// Copyright (C) 2021 Maxim Masiutin
 //
 // This programs is free for commercial and non-commercial use as long as
 // the following conditions are aheared to.
@@ -241,6 +241,7 @@ type
     procedure Resume;
     procedure Suspend;
     procedure Terminate;
+    procedure WaitFor;
     property FreeOnTerminate: Boolean read FFreeOnTerminate
       write FFreeOnTerminate;
     property Handle: THandle read FHandle;
@@ -262,7 +263,7 @@ type
 
   TCollClass = class of TColl;
 
-  TListSortCompare = function(Item1, Item2: Pointer): Integer;
+  TListSortCompare = function(Item1, Item2: Pointer): Int64;
 
   TColl = class(TAdvCpObject)
   protected
@@ -308,7 +309,7 @@ type
   TSortedColl = class(TColl)
   public
     Duplicates: Boolean;
-    function Compare(Key1, Key2: Pointer): Integer; virtual; abstract;
+    function Compare(Key1, Key2: Pointer): Int64; virtual; abstract;
     function KeyOf(Item: Pointer): Pointer; virtual;
     function IndexOf(Item: Pointer): Integer; override;
     procedure Insert(Item: Pointer); override;
@@ -324,7 +325,7 @@ type
   public
     function KeyOf(Item: Pointer): Pointer; override;
     procedure FreeItem(Item: Pointer); override;
-    function Compare(Key1, Key2: Pointer): Integer; override;
+    function Compare(Key1, Key2: Pointer): Int64; override;
     function CopyItem(AItem: Pointer): Pointer; override;
     function Copy: Pointer; override;
     procedure Ins(const S: AnsiString);
@@ -352,7 +353,7 @@ type
 function AddRightSpaces(const S: AnsiString; NumSpaces: Integer): AnsiString;
 procedure AddStr(var S: AnsiString; c: AnsiChar);
 procedure Add_Str(var S: ShortString; c: AnsiChar);
-function CompareStr(const S1, S2: AnsiString): Integer; assembler;
+function CompareStr(const S1, S2: AnsiString): Int64; assembler;
 function CopyLeft(const S: AnsiString; I: Integer): AnsiString;
 procedure DelDoubles(const St: AnsiString; var Source: AnsiString);
 procedure DelFC(var S: AnsiString);
@@ -419,7 +420,7 @@ function __unsafe(c: AnsiChar): Boolean;
 { --- Basic Routines }
 
 function Buf2Str(const Buffer): AnsiString;
-procedure Clear(var Buf; Count: Integer);
+procedure Clear(out Buf; Count: Integer);
 function CompareMem(P1, P2: Pointer; Length: Integer): Boolean; assembler;
 procedure FreeObject(var O);
 procedure LowerPrec(var a, B: Integer; Bits: Byte);
@@ -505,17 +506,33 @@ function StrAsg(const Src: AnsiString): AnsiString;
 
 type
   TResetterThread = class(TThread)
-    TimeToSleep, oSleep: DWORD;
+    TimeToSleep: DWORD;
+    oSleep: THandle;
     constructor Create;
     procedure Execute; override;
     destructor Destroy; override;
   end;
 
-{$IFNDEF UNICODE}
+  TFileFlusherThread = class(TThread)
+  public
+    constructor Create(AFileHandle: THandle; ACriticalSection: PRTLCriticalSection);
+    procedure Signal;
+    destructor Destroy; override;
+  private
+    FileHandle: THandle;
+    oEvent: THandle;
+    CS: PRTLCriticalSection;
+    LastFlushInitiatedTimestamp: DWORD;
+    procedure Flush(ATime: DWORD);
+  protected
+    procedure Execute; override;
+  end;
 
+{$IFNDEF UNICODE}
   UnicodeString = WideString;
   RawByteString = AnsiString;
 {$ENDIF}
+
 function UnicodeStringToRawByteString(const w: UnicodeString; CP: Integer)
   : RawByteString;
 
@@ -526,18 +543,22 @@ var
   SocksCount: Integer;
 
 const
-  CServerVersion = '1.95';
+  CServerVersion = '1.97';
   CServerProductName = 'TinyWeb';
   CServerName = CServerProductName + '/' + CServerVersion;
   CMB_FAILED = MB_APPLMODAL or MB_OK or MB_ICONSTOP;
 
+{$IFDEF DEBUG}
+procedure xBaseSelfTest;
+{$ENDIF}
+
 implementation
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Time Routines                             //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                          Time Routines                             //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 const
   cTimeHi = 27111902;
@@ -652,6 +673,7 @@ begin
   end
   else
   begin
+    FillChar(wf, SizeOf(wf), 0);
     Result := FindFirstFileA(@(FName[1]), wf);
     if Result <> INVALID_HANDLE_VALUE then
       CvtFD(wf, FindData);
@@ -662,6 +684,7 @@ function uFindNext(Handle: THandle; var FindData: TuFindData): Boolean;
 var
   wf: TWin32FindDataA;
 begin
+  FillChar(wf, SizeOf(wf), 0);
   Result := FindNextFileA(Handle, wf);
   if Result then
     CvtFD(wf, FindData);
@@ -672,11 +695,11 @@ begin
   Result := Windows.FindClose(Handle);
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// AnsiString Routines                            //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                      AnsiString Routines                           //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 function IsWild(const S: AnsiString): Boolean;
 var
@@ -707,6 +730,7 @@ end;
 
 function AddRightSpaces(const S: AnsiString; NumSpaces: Integer): AnsiString;
 begin
+  Result := '';
   SetLength(Result, NumSpaces);
   FillChar(Result[1], NumSpaces, ' ');
   Move(S[1], Result[1], MinI(NumSpaces, Length(S)));
@@ -714,6 +738,7 @@ end;
 
 function Hex2(a: Byte): AnsiString;
 begin
+  Result := '';
   SetLength(Result, 2);
   Result[1] := rrLoHexChar[a shr 4];
   Result[2] := rrLoHexChar[a and $F];
@@ -723,6 +748,7 @@ function Hex4(a: Word): AnsiString;
 var
   I: Integer;
 begin
+  Result := '';
   SetLength(Result, 4);
   for I := 0 to 3 do
   begin
@@ -735,6 +761,7 @@ function Hex8(a: DWORD): AnsiString;
 var
   I: DWORD;
 begin
+  Result := '';
   SetLength(Result, 8);
   for I := 0 to 7 do
   begin
@@ -1137,13 +1164,13 @@ begin
   Delete(S, I, Length(S) - I + 1);
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Basic Routines                            //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                          Basic Routines                            //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
-procedure Clear(var Buf; Count: Integer);
+procedure Clear(out Buf; Count: Integer);
 begin
   FillChar(Buf, Count, 0);
 end;
@@ -1248,11 +1275,11 @@ begin
   B := B shr c;
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Win32 Events Extentions                       //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                      Win32 Events Extentions                       //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 function CreateEvtA: THandle;
 begin
@@ -1288,11 +1315,11 @@ begin
   SignaledEvt := WaitForSingleObject(id, 0) = id;
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Win32 API Hooks                               //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                      Win32 API Hooks                               //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 procedure CloseHandles(const Handles: array of THandle);
 var
@@ -1495,16 +1522,17 @@ end;
 
 function WindowsDirectory: AnsiString;
 begin
+  Result := '';
   SetLength(Result, MAX_PATH);
   GetWindowsDirectoryA(@(Result[1]), MAX_PATH);
   SetLength(Result, NulSearch(Result[1]));
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Registry Routines                             //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                      Registry Routines                             //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 function OpenRegKeyEx(const AName: AnsiString; AMode: DWORD): HKey;
 begin
@@ -1513,6 +1541,7 @@ begin
     Result := INVALID_REGISTRY_KEY;
     Exit;
   end;
+  Result := 0;
   if RegOpenKeyExA(HKEY_LOCAL_MACHINE, // handle of an open key
     @(AName[1]), // subkey name
     0, // Reserved
@@ -1534,6 +1563,7 @@ begin
     Result := INVALID_REGISTRY_KEY;
     Exit;
   end;
+  Result := 0;
   if RegCreateKeyExA(HKEY_LOCAL_MACHINE, // handle of an open key
     @(AFName[1]), // subkey name
     0, // reserved, must be zero
@@ -1570,6 +1600,7 @@ var
   PDataBuf: PAnsiChar;
 begin
   L := 250;
+  z := '';
   SetLength(z, L + 1);
   PDataBuf := @(z[1]);
   T := REG_SZ;
@@ -1665,17 +1696,18 @@ begin
   Result := e = ERROR_SUCCESS;
 end;
 
-/// /////////////////////////////////////////////////////////////////////
-// //
-// Objects                                //
-// //
-/// /////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+//                                                                    //
+//                             Objects                                //
+//                                                                    //
+////////////////////////////////////////////////////////////////////////
 
 function SysErrorMsg(ErrorCode: DWORD): AnsiString;
 var
   Len: Integer;
   Buffer: array [0 .. 255] of AnsiChar;
 begin
+  Clear(Buffer, SizeOf(Buffer));
   Len := FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM or
     FORMAT_MESSAGE_ARGUMENT_ARRAY, nil, ErrorCode, 0, Buffer,
     SizeOf(Buffer), nil);
@@ -1940,6 +1972,7 @@ var
   I: Integer;
 begin
   IndexOf := -1;
+  I := -1;
   if Search(KeyOf(Item), I) then
   begin
     if Duplicates then
@@ -1954,13 +1987,15 @@ procedure TSortedColl.Insert(Item: Pointer);
 var
   I: Integer;
 begin
+  I := -1;
   if not Search(KeyOf(Item), I) or Duplicates then
     AtInsert(I, Item);
 end;
 
 function TSortedColl.Search(Key: Pointer; var Index: Integer): Boolean;
 var
-  L, H, I, c: Integer;
+  L, H, I: Integer;
+  c: Int64;
 begin
   Search := False;
   L := 0;
@@ -2036,6 +2071,7 @@ var
 begin
   while Str <> '' do
   begin
+    z := '';
     GetWrd(Str, z, Delim);
     if Sorted then
       Ins(z)
@@ -2048,6 +2084,7 @@ function TStringColl.Found(const Str: AnsiString): Boolean;
 var
   I: Integer;
 begin
+  I := -1;
   Result := Search(@Str, I);
 end;
 
@@ -2148,7 +2185,7 @@ begin
   Result := PAnsiString(At(Index))^;
 end;
 
-function TStringColl.Compare(Key1, Key2: Pointer): Integer;
+function TStringColl.Compare(Key1, Key2: Pointer): Int64;
 begin
   Compare := CompareStr(PAnsiString(Key1)^, PAnsiString(Key2)^);
 end;
@@ -2203,11 +2240,10 @@ end;
 
 const
   CMonths = 'JanFebMarAprMayJunJulAugSepOctNovDec';
-  Months: string[Length(CMonths)] = CMonths;
 
 function MonthE(m: Integer): AnsiString;
 begin
-  Result := Copy(Months, 1 + (m - 1) * 3, 3);
+  Result := Copy(AnsiString(CMonths), 1 + (m - 1) * 3, 3);
 end;
 
 procedure GlobalFail;
@@ -2248,6 +2284,7 @@ begin
     Result := '';
     Exit;
   end;
+  Clear(Buf, SizeOf(Buf));
   I := GetEnvironmentVariableA(@(Name[1]), Buf, BufSize);
   case I of
     1 .. BufSize:
@@ -2307,6 +2344,7 @@ begin
     Result := '';
     Exit;
   end;
+  S := '';
   SetLength(S, 1000);
   GetTempFileNameA(@(APath[1]), @(APfx[1]), 0, @(S[1]));
   Result := Copy(S, 1, NulSearch(S[1]));
@@ -2400,6 +2438,12 @@ procedure TThread.Resume;
 begin
   if ResumeThread(FHandle) = 1 then
     FSuspended := False;
+end;
+
+
+procedure TThread.WaitFor;
+begin
+  WaitForSingleObject(FHandle, INFINITE);
 end;
 
 procedure TThread.Terminate;
@@ -2502,6 +2546,8 @@ begin
   end
   else
   begin
+    FillChar(Buffer, SizeOf(Buffer), 0);
+    FName := nil;
     SetString(Result, Buffer, GetFullPathNameA(@(FileName[1]), SizeOf(Buffer),
       Buffer, FName));
   end;
@@ -2582,7 +2628,7 @@ begin
     Dispose(P);
 end;
 
-function CompareStr(const S1, S2: AnsiString): Integer; assembler;
+function CompareStr(const S1, S2: AnsiString): Int64; assembler;
 asm
   PUSH    ESI
   PUSH    EDI
@@ -2606,6 +2652,7 @@ asm
 @@4:    SUB     EAX,EDX
   POP     EDI
   POP     ESI
+  CDQ
 end;
 
 function CompareMem(P1, P2: Pointer; Length: Integer): Boolean; assembler;
@@ -2851,6 +2898,7 @@ var
 
 begin
   Result := False;
+  R := '';
   sl := Length(S);
   I := 0;
   while I < sl do
@@ -2903,6 +2951,7 @@ var
   c: AnsiChar;
 begin
   Result := False;
+  R := '';
   KVC := False;
   for I := 1 to Length(S) do
   begin
@@ -2948,20 +2997,35 @@ end;
 
 function StoI(const S: AnsiString): Integer;
 begin
+  Result := 0;
   if not _Val(S, Result) then
     Result := 0;
 end;
 
 function _LogOK(const Name: AnsiString; var Handle: THandle): Boolean;
+var
+  s: AnsiString;
+  le: DWORD;
 begin
   if Handle = 0 then
   begin
+    SetLastError(0);
     Handle := _CreateFile(Name, [cWrite]);
     if Handle <> INVALID_HANDLE_VALUE then
       if SetFilePointer(Handle, 0, nil, FILE_END) = INVALID_FILE_SIZE then
         ClearHandle(Handle);
   end;
   Result := Handle <> INVALID_HANDLE_VALUE;
+  if not Result then
+  begin
+    le := GetLastError;
+    s := 'Cannot create/open the log file for writing - '+Name;
+    if le <> 0 then
+    begin
+      s := s + ' - '+SysErrorMsg(le);
+    end;
+    MessageBoxA(0, PAnsiChar(s), CServerName, CMB_FAILED);
+  end;
 end;
 
 function AddrInet(I: DWORD): AnsiString;
@@ -2989,8 +3053,10 @@ var
   T, L: TFileTime;
   a, B, c: DWORD;
 begin
+  FillChar(T, SizeOf(T), 0);
+  FillChar(L, SizeOf(L), 0);
   GetSystemTimeAsFileTime(T);
-  FileTimeToLocalFileTime(T, L);
+  if not FileTimeToLocalFileTime(T, L) then Exit;
   a := uCvtGetFileTime(T.dwLowDateTime, T.dwHighDateTime);
   B := uCvtGetFileTime(L.dwLowDateTime, L.dwHighDateTime);
   if a > B then
@@ -3013,16 +3079,20 @@ type
   end;
 
   THostCacheColl = class(TSortedColl)
-    function Compare(Key1, Key2: Pointer): Integer; override;
+    function Compare(Key1, Key2: Pointer): Int64; override;
     function KeyOf(Item: Pointer): Pointer; override;
   end;
 
 var
   HostCache: THostCacheColl;
 
-function THostCacheColl.Compare(Key1, Key2: Pointer): Integer;
+function THostCacheColl.Compare(Key1, Key2: Pointer): Int64;
+var
+  i1, i2: Int64;
 begin
-  Result := Integer(Key1) - Integer(Key2);
+  i1 := NativeUInt(Key1);
+  i2 := NativeUInt(Key2);
+  Result := i1 - i2;
 end;
 
 function THostCacheColl.KeyOf(Item: Pointer): Pointer;
@@ -3040,13 +3110,22 @@ var
   he: PHostEnt;
   HostName: AnsiString;
 begin
+  HostName := '';
   HostCache.Enter;
+  I := -1;
   F := HostCache.Search(Pointer(Addr), I);
   if F then
+  begin
     Result := StrAsg(THostCache(HostCache[I]).Name);
+  end else
+  begin
+    Result := '';
+  end;
   HostCache.Leave;
   if F then
+  begin
     Exit;
+  end;
   P := gethostbyaddr(@Addr, 4, PF_INET);
   ok := False;
   if P <> nil then
@@ -3149,7 +3228,7 @@ end;
 
 constructor TResetterThread.Create;
 begin
-  inherited Create(False);
+  inherited Create(True);
   oSleep := CreateEvent(nil, False, False, nil);
   TimeToSleep := INFINITE;
 end;
@@ -3189,6 +3268,96 @@ begin
     SocketsColl.Leave;
   until Terminated;
 end;
+
+constructor TFileFlusherThread.Create(AFileHandle: THandle; ACriticalSection: PRTLCriticalSection);
+begin
+  inherited Create(True);
+  FileHandle := AFileHandle;
+  CS := ACriticalSection;
+  oEvent := CreateEvtA;
+end;
+
+procedure TFileFlusherThread.Execute;
+const
+  CMaxTimeout = 100;
+  CMinTimeout = 5;
+var
+  WaitTimeout: DWORD;
+  CurrentTimestamp: DWORD;
+  DiffI: Int64;
+  DiffD: DWORD;
+  le: DWORD;
+  s: AnsiString;
+begin
+  WaitTimeout := INFINITE;
+  repeat
+    case WaitForSingleObject(oEvent, WaitTimeout) of
+       WAIT_TIMEOUT:
+          if not Terminated then
+          begin
+            Flush(uGetSystemTime);
+            WaitTimeout := INFINITE;
+          end;
+       WAIT_OBJECT_0:
+          if not Terminated then
+          begin
+            CurrentTimestamp := uGetSystemTime;
+            DiffI := Abs(Int64(LastFlushInitiatedTimestamp) - Int64(CurrentTimestamp));
+            if DiffI > MaxInt then DiffD := MaxInt else DiffD := DWORD(DiffI);
+            if DiffD < CMaxTimeout then
+            begin
+              // less than 100 milliseconds (0.1 seconds) passed since last flush
+              WaitTimeout := CMaxTimeout - DiffD;
+              if WaitTimeout < CMinTimeout then
+              begin
+                // do not wait if too few milliseconds left until the upcomingflush,
+                // flush the buffers right away
+                WaitTimeout := 0;
+              end;
+            end else
+            begin
+              // flush the buffers right away
+              WaitTimeout := 0;
+            end;
+            if WaitTimeout = 0 then
+            begin
+              Flush(CurrentTimestamp);
+              WaitTimeout := INFINITE;
+            end;
+          end;
+       else
+       begin
+         le := GetLastError;
+         Terminate;
+         s := 'TFileFlusherThread WaitForSingleObject failed - '+SysErrorMsg(le);
+         MessageBoxA(0, PAnsiChar(s), CServerName, CMB_FAILED);
+       end;
+    end;
+  until Terminated;
+end;
+
+destructor TFileFlusherThread.Destroy;
+begin
+  ClearHandle(oEvent);
+  FileHandle := INVALID_HANDLE_VALUE;
+  CS := nil;
+  inherited Destroy;
+end;
+
+
+procedure TFileFlusherThread.Flush(ATime: DWORD);
+begin
+  EnterCriticalSection(CS^);
+  FlushFileBuffers(FileHandle);
+  LastFlushInitiatedTimestamp := ATime;
+  LeaveCriticalSection(CS^);
+end;
+
+procedure TFileFlusherThread.Signal;
+begin
+  SetEvent(oEvent);
+end;
+
 
 function CompareMask(const N, m: AnsiString; SupportPercent: Boolean): Boolean;
 var
@@ -3550,5 +3719,19 @@ begin
   SetCodePage(Result, CP, False);
 {$ENDIF}
 end;
+
+{$IFDEF DEBUG}
+procedure xBaseSelfTest;
+var
+  i1, i2, i3: Int64;
+begin
+  i1 := CompareStr('a', 'b');
+  i2 := CompareStr('b', 'a');
+  i3 := CompareStr('a', 'a');
+  if not (i1 < 0) or
+     not (i2 > 0) or
+     not (i3 = 0) then GlobalFail; //'CompareStr Self-Test Failed!!!
+end;
+{$ENDIF}
 
 end.

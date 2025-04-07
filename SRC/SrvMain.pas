@@ -1,9 +1,9 @@
 //////////////////////////////////////////////////////////////////////////
 //
 // TinyWeb
-// Copyright (C) 1997-2000 RIT Research Labs
+// Copyright (C) 2021-2023 Maxim Masiutin
 // Copyright (C) 2000-2017 RITLABS S.R.L.
-// Copyright (C) 2021 Maxim Masiutin
+// Copyright (C) 1997-2000 RIT Research Labs
 //
 // This programs is free for commercial and non-commercial use as long as
 // the following conditions are aheared to.
@@ -76,26 +76,44 @@ array [0 .. MaxStatusCodeIdx] of record Code: Integer;
 Msg:
 AnsiString
 end
-= ((Code: 100; Msg: 'Continue'), (Code: 101; Msg: 'Switching Protocols'),
-  (Code: 200; Msg: 'OK'), (Code: 201; Msg: 'Created'), (Code: 202;
-  Msg: 'Accepted'), (Code: 203; Msg: 'Non-Authoritative Information'),
-  (Code: 204; Msg: 'No Content'), (Code: 205; Msg: 'Reset Content'), (Code: 206;
-  Msg: 'Partial Content'), (Code: 300; Msg: 'Multiple Choices'), (Code: 301;
-  Msg: 'Moved Permanently'), (Code: 302; Msg: 'Moved Temporarily'), (Code: 303;
-  Msg: 'See Other'), (Code: 304; Msg: 'Not Modified'), (Code: 305;
-  Msg: 'Use Proxy'), (Code: 400; Msg: 'Bad Request'), (Code: 401;
-  Msg: 'Unauthorized'), (Code: 402; Msg: 'Payment Required'), (Code: 403;
-  Msg: 'Forbidden'), (Code: 404; Msg: 'Not Found'), (Code: 405;
-  Msg: 'Method Not Allowed'), (Code: 406; Msg: 'Not Acceptable'), (Code: 407;
-  Msg: 'Proxy Authentication Required'), (Code: 408; Msg: 'Request Time-out'),
-  (Code: 409; Msg: 'Conflict'), (Code: 410; Msg: 'Gone'), (Code: 411;
-  Msg: 'Length Required'), (Code: 412; Msg: 'Precondition Failed'), (Code: 413;
-  Msg: 'Request Entity Too Large'), (Code: 414; Msg: 'Request-URI Too Large'),
-  (Code: 415; Msg: 'Unsupported Media Type'), (Code: 500;
-  Msg: 'Internal Server Error'), (Code: 501; Msg: 'Not Implemented'),
-  (Code: 502; Msg: 'Bad Gateway'), (Code: 503; Msg: 'Service Unavailable'),
-  (Code: 504; Msg: 'Gateway Time-out'), (Code: 505;
-  Msg: 'HTTP Version not supported'));
+= (
+  (Code: 100; Msg: 'Continue'), 
+  (Code: 101; Msg: 'Switching Protocols'),
+  (Code: 200; Msg: 'OK'), 
+  (Code: 201; Msg: 'Created'), 
+  (Code: 202; Msg: 'Accepted'), 
+  (Code: 203; Msg: 'Non-Authoritative Information'),
+  (Code: 204; Msg: 'No Content'), 
+  (Code: 205; Msg: 'Reset Content'), 
+  (Code: 206; Msg: 'Partial Content'), 
+  (Code: 300; Msg: 'Multiple Choices'), 
+  (Code: 301; Msg: 'Moved Permanently'), 
+  (Code: 302; Msg: 'Moved Temporarily'), 
+  (Code: 303; Msg: 'See Other'), 
+  (Code: 304; Msg: 'Not Modified'), 
+  (Code: 305; Msg: 'Use Proxy'), 
+  (Code: 400; Msg: 'Bad Request'), 
+  (Code: 401; Msg: 'Unauthorized'), 
+  (Code: 402; Msg: 'Payment Required'), 
+  (Code: 403; Msg: 'Forbidden'), 
+  (Code: 404; Msg: 'Not Found'), 
+  (Code: 405; Msg: 'Method Not Allowed'), 
+  (Code: 406; Msg: 'Not Acceptable'), 
+  (Code: 407; Msg: 'Proxy Authentication Required'), 
+  (Code: 408; Msg: 'Request Time-out'),
+  (Code: 409; Msg: 'Conflict'), 
+  (Code: 410; Msg: 'Gone'), 
+  (Code: 411; Msg: 'Length Required'), 
+  (Code: 412; Msg: 'Precondition Failed'), 
+  (Code: 413; Msg: 'Request Entity Too Large'), 
+  (Code: 414; Msg: 'Request-URI Too Large'),
+  (Code: 415; Msg: 'Unsupported Media Type'), 
+  (Code: 500; Msg: 'Internal Server Error'), 
+  (Code: 501; Msg: 'Not Implemented'),
+  (Code: 502; Msg: 'Bad Gateway'), 
+  (Code: 503; Msg: 'Service Unavailable'),
+  (Code: 504; Msg: 'Gateway Time-out'), 
+  (Code: 505; Msg: 'HTTP Version not supported'));
 
 type
   TEntityHeader = class;
@@ -149,7 +167,7 @@ type
   end;
 
   TContentTypeColl = class(TSortedColl)
-    function Compare(Key1, Key2: Pointer): Integer; override;
+    function Compare(Key1, Key2: Pointer): Int64; override;
     function KeyOf(Item: Pointer): Pointer; override;
   end;
 
@@ -291,6 +309,7 @@ var
   FAccessLog, FAgentLog, FErrorLog, FRefererLog: AnsiString;
   CSAccessLog, CSAgentLog, CSErrorLog, CSRefererLog: TRTLCriticalSection;
   HAccessLog, HAgentLog, HErrorLog, HRefererLog: THandle;
+  AccessLogFlusher, AgentLogFlusher, ErrorLogFlusher, RefererLogFlusher: TFileFlusherThread;
 {$ENDIF}
 
 function FileTimeToStr(AT: DWORD): AnsiString;
@@ -303,9 +322,14 @@ var
 begin
   uCvtSetFileTime(AT, T.dwLowDateTime, T.dwHighDateTime);
   if FileTimeToSystemTime(T, d) then
+  begin
     Result := wkday[d.wDayOfWeek] + ', ' + ItoSz(d.wDay, 2) + ' ' +
       MonthE(d.wMonth) + ' ' + ItoS(d.wYear) + ' ' + ItoSz(d.wHour, 2) + ':' +
       ItoSz(d.wMinute, 2) + ':' + ItoSz(d.wSecond, 2) + ' GMT';
+  end else
+  begin
+    Result := '';
+  end;
 end;
 
 function StrToFileTime(AStr: AnsiString): DWORD;
@@ -321,6 +345,7 @@ begin
   Result := INVALID_FILE_TIME;
   Clear(d, SizeOf(d));
   s := AStr;
+  z := '';
   GetWrd(s, z, ' ');
   GetWrdD(s, z);
   v := Vl(z);
@@ -360,6 +385,7 @@ begin
   if v = INVALID_VALUE then
     Exit;
   d.wSecond := v;
+  Clear(T, SizeOf(T));
   if not SystemTimeToFileTime(d, T) then
     Exit;
   Result := uCvtGetFileTime(T.dwLowDateTime, T.dwHighDateTime);
@@ -698,6 +724,7 @@ var
   slen: Integer;
 begin
   slen := Length(s);
+  j := 0;
   if slen > 0 then
     WriteFile(HPipe, s[1], slen, j, nil);
 end;
@@ -724,6 +751,7 @@ begin
         end
         else
         begin
+          z := '';
           GetWrdStrictUC(s, z);
           Delete(z, Length(z), 1);
           if not EntityHeader.Filter(z, s) then
@@ -742,6 +770,8 @@ var
   j: DWORD;
 begin
   repeat
+    j := 0;
+    FillChar(ss, SizeOf(ss), 0);
     if (not ReadFile(HPipe, ss[1], 250, j, nil)) or (j = 0) then
       Break;
     ss[0] := AnsiChar(j);
@@ -754,6 +784,7 @@ var
   j: DWORD;
 begin
   repeat
+    j := 0;
     if (not ReadFile(HPipe, Buffer^, CHTTPServerThreadBufSize, j, nil)) or
       (j = 0) then
       Break;
@@ -786,6 +817,9 @@ var
   var
     d, n, e: AnsiString;
   begin
+    d := '';
+    n := '';
+    e := '';
     FSPlit(AExecutable, d, n, e);
     Result := n + e + ' is a GUI application';
   end;
@@ -804,6 +838,8 @@ begin
   CreatePipe(si_r, si_w, @Security, 0);
   CreatePipe(so_r, so_w, @Security, 0);
   CreatePipe(se_r, se_w, @Security, 0);
+
+  FillChar(PI, SizeOf(PI), 0);
 
   FillChar(SI, SizeOf(SI), 0);
   SI.CB := SizeOf(SI);
@@ -925,6 +961,7 @@ begin
 
   while not PipeReadStdThread.Error do
   begin
+    Actually := 0;
     if (not ReadFile(so_r, Buffer, CHTTPServerThreadBufSize, Actually, nil)) or
       (Actually = 0) then
       Break;
@@ -963,10 +1000,12 @@ var
   slen: Integer;
 begin
   s := AAgent + #13#10;
-  EnterCriticalSection(CSAgentLog);
   slen := Length(s);
+  b := 0;
+  EnterCriticalSection(CSAgentLog);
   WriteFile(HAgentLog, s[1], slen, b, nil);
   LeaveCriticalSection(CSAgentLog);
+  AgentLogFlusher.Signal;
 end;
 
 procedure AddRefererLog(const ARefererSrc, ARefererDst: AnsiString);
@@ -978,10 +1017,12 @@ begin
   if ARefererSrc = '' then
     Exit;
   s := ARefererSrc + ' -> ' + ARefererDst + #13#10;
-  EnterCriticalSection(CSRefererLog);
   slen := Length(s);
+  b := 0;
+  EnterCriticalSection(CSRefererLog);
   WriteFile(HRefererLog, s[1], slen, b, nil);
   LeaveCriticalSection(CSRefererLog);
+  RefererLogFlusher.Signal;
 end;
 
 function CurTime: AnsiString;
@@ -990,6 +1031,8 @@ var
   b: Integer;
   s: AnsiString;
 begin
+  s := '';
+  FillChar(lt, SizeOf(lt), 0);
   GetLocalTime(lt);
   b := TimeZoneBias;
   if b < 0 then
@@ -1035,10 +1078,12 @@ begin
     ItoS(AStatusCode) + ' ' + // The HTTP status code returned to the client
     z + // The content-length of the document transferred
     #13#10;
-  EnterCriticalSection(CSAccessLog);
   slen := Length(z);
+  b := 0;
+  EnterCriticalSection(CSAccessLog);
   WriteFile(HAccessLog, z[1], slen, b, nil);
   LeaveCriticalSection(CSAccessLog);
+  AccessLogFlusher.Signal;
 end;
 
 procedure AddErrorLog(const AErr: AnsiString);
@@ -1048,10 +1093,12 @@ var
   slen: Integer;
 begin
   s := CurTime + ' ' + AErr + #13#10;
-  EnterCriticalSection(CSErrorLog);
   slen := Length(s);
+  b := 0;
+  EnterCriticalSection(CSErrorLog);
   WriteFile(HErrorLog, s[1], slen, b, nil);
   LeaveCriticalSection(CSErrorLog);
+  ErrorLogFlusher.Signal;
 end;
 {$ENDIF}
 
@@ -1124,6 +1171,7 @@ begin
   z := LowerCase(CopyLeft(ExtractFileExt(AFName), 2));
   if z <> '' then
   begin
+    i := -1;
     if not ContentTypes.Search(@z, i) then
       z := ''
     else
@@ -1221,14 +1269,14 @@ type
   end;
 
   TExecutableCacheColl = class(TSortedColl)
-    function Compare(Key1, Key2: Pointer): Integer; override;
+    function Compare(Key1, Key2: Pointer): Int64; override;
     function KeyOf(Item: Pointer): Pointer; override;
   end;
 
 var
   ExecutableCache: TExecutableCacheColl;
 
-function TExecutableCacheColl.Compare(Key1, Key2: Pointer): Integer;
+function TExecutableCacheColl.Compare(Key1, Key2: Pointer): Int64;
 begin
   Compare := CompareStr(PAnsiString(Key1)^, PAnsiString(Key2)^);
 end;
@@ -1251,6 +1299,7 @@ begin
     Exit;
   end;
   ExecutableCache.Enter;
+  i := -1;
   if ExecutableCache.Search(@LocalFName, i) then
   begin
     p := ExecutableCache[i];
@@ -1282,14 +1331,14 @@ type
   end;
 
   TRootCacheColl = class(TSortedColl)
-    function Compare(Key1, Key2: Pointer): Integer; override;
+    function Compare(Key1, Key2: Pointer): Int64; override;
     function KeyOf(Item: Pointer): Pointer; override;
   end;
 
 var
   RootCacheColl: TRootCacheColl;
 
-function TRootCacheColl.Compare(Key1, Key2: Pointer): Integer;
+function TRootCacheColl.Compare(Key1, Key2: Pointer): Int64;
 begin
   Compare := CompareStr(PAnsiString(Key1)^, PAnsiString(Key2)^);
 end;
@@ -1314,6 +1363,7 @@ begin
   s := GetEnvVariable('PATHEXT');
   while s <> '' do
   begin
+    z := '';
     GetWrd(s, z, ';');
     if Length(z) < 2 then
       Continue;
@@ -1337,6 +1387,7 @@ var
   p: Pointer;
 begin
   RootCacheColl.Enter;
+  i := -1;
   Found := RootCacheColl.Search(@AURI, i);
   if Found then
   begin
@@ -1344,10 +1395,15 @@ begin
     c := TRootCache(p);
     IsCGI := c.IsCGI;
     Result := StrAsg(c.FResult);
+  end else
+  begin
+    Result := '';
   end;
   RootCacheColl.Leave;
   if Found then
+  begin
     Exit;
+  end;
   Result := FindRootFileEx(AURI, IsCGI);
   RootCacheColl.Enter;
   if not RootCacheColl.Search(@AURI, i) then
@@ -1513,6 +1569,7 @@ var
     PathInfo := CopyLeft(LocalFName, Length(CgiFile) + 2);
     ts := PathInfo;
     repeat
+      z := '';
       GetWrd(ts, z, '\');
       CgiFile := CgiFile + '\' + z;
       fa := GetFileAttributesA(@(CgiFile[1]));
@@ -1604,6 +1661,8 @@ var
   IsCGI: Boolean;
   CheckedURI, CDoubleDot, CDoubleBackslash, CDotEncosed: AnsiString;
 begin
+  Result := nil; // to avoid the uninitialized warning
+
   CBackSlash := '\';
   CForwardSlash := '/';
   ResponseEntityHeader := nil;
@@ -1664,6 +1723,7 @@ begin
 
   if CheckedURI[Length(CheckedURI)] = '\' then
   begin
+    IsCGI := False;
     LocalFName := FindRootFile(CheckedURI, IsCGI);
     if IsCGI then
     begin
@@ -1726,6 +1786,9 @@ procedure THTTPServerThread.Execute;
 var
   FPOS: DWORD;
   i, j: Integer;
+{$IFDEF LOGGING}
+  logS: AnsiString;
+{$ENDIF}
   s, z, k: AnsiString;
   d: THTTPData;
   AbortConnection: Boolean;
@@ -1788,6 +1851,7 @@ begin
 
           // Parse HTTP version
           s := HTTPVersion;
+          z := '';
           GetWrd(s, z, '/');
           if z <> 'HTTP' then
             Break;
@@ -1909,6 +1973,7 @@ begin
       if s <> '' then
       begin
         k := s;
+        z := '';
         GetWrd(k, z, ' ');
         v := Vl(z);
         if (v <> INVALID_VALUE) and (v < 1000) and (v > 0) then
@@ -1977,12 +2042,19 @@ begin
       ResponseResponseHeader.Server := CServerName;
 
       if ReportError then
+      begin
         i := -1
+      end
       else
+      begin
         i := ResponseEntityHeader.EntityLength;
+      end;
+
 {$IFDEF LOGGING}
-      AddAccessLog(RemoteHost, Method + ' ' + URIPath, HTTPVersion, d.AuthUser,
-        StatusCode, i);
+      logS := Method + ' ' + URIPath;
+      if URIQuery <> '' then logS := LogS+'?'+URIQuery;
+      AddAccessLog(RemoteHost, logS, HTTPVersion, d.AuthUser, StatusCode, i);
+      Finalize(logS);
 {$ENDIF}
       s := 'HTTP/1.0 ' + s + #13#10 + ResponseGeneralHeader.OutString +
         ResponseResponseHeader.OutString +
@@ -1993,6 +2065,7 @@ begin
         Socket.WriteStr(s);
         FPOS := 0;
         repeat
+          Actually := 0;
           ReadFile(FHandle, Buffer, CHTTPServerThreadBufSize, Actually, nil);
           Inc(FPOS, Actually);
           if FPOS > FileNfo.Size then
@@ -2014,618 +2087,712 @@ begin
       AbortConnection := AbortConnection or not KeepAliveInReply;
     end;
     FreeObject(d);
-  until AbortConnection end;
+  until AbortConnection
+end;
 
-  function TContentTypeColl.Compare(Key1, Key2: Pointer): Integer;
+function TContentTypeColl.Compare(Key1, Key2: Pointer): Int64;
+begin
+  Compare := CompareStr(PAnsiString(Key1)^, PAnsiString(Key2)^);
+end;
+
+function TContentTypeColl.KeyOf(Item: Pointer): Pointer;
+begin
+  Result := @TContentType(Item).Extension;
+end;
+
+procedure GetContentTypes(const CBase, SubName: AnsiString; Swap: Boolean);
+const
+  ClassBufSize = 1000;
+var
+  Buf: array [0 .. ClassBufSize] of AnsiChar;
+  r: TContentType;
+  s, z, T: AnsiString;
+  ec, i: Integer;
+  Key, SubKey, BufSize, // size of AnsiString buffer
+  cSubKeys, // number of subkeys
+  cchMaxSubkey, // longest subkey name length
+  cchMaxClass, // longest class AnsiString length
+  cValues, // number of value entries
+  cchMaxValueName, // longest value name length
+  cbMaxValueData, // longest value data length
+  cbSecurityDescriptor: DWORD; // security descriptor length
+  ftLastWriteTime: TFileTime; // last write time
+begin
+  Key := OpenRegKeyEx(CBase, KEY_QUERY_VALUE or KEY_ENUMERATE_SUB_KEYS);
+  BufSize := ClassBufSize;
+  ec := RegQueryInfoKeyA(Key, // handle of key to query
+    @(Buf[0]), @BufSize, nil, @cSubKeys, @cchMaxSubkey, @cchMaxClass,
+    @cValues, @cchMaxValueName, @cbMaxValueData, @cbSecurityDescriptor,
+    @ftLastWriteTime);
+  if ec <> ERROR_SUCCESS then
   begin
-    Compare := CompareStr(PAnsiString(Key1)^, PAnsiString(Key2)^);
+    RegCloseKey(Key);
+    Exit
   end;
-
-  function TContentTypeColl.KeyOf(Item: Pointer): Pointer;
+  for i := 0 to cSubKeys - 1 do
   begin
-    Result := @TContentType(Item).Extension;
-  end;
-
-  procedure GetContentTypes(const CBase, SubName: AnsiString; Swap: Boolean);
-  const
-    ClassBufSize = 1000;
-  var
-    Buf: array [0 .. ClassBufSize] of AnsiChar;
-    r: TContentType;
-    s, z, T: AnsiString;
-    ec, i: Integer;
-    Key, SubKey, BufSize, // size of AnsiString buffer
-    cSubKeys, // number of subkeys
-    cchMaxSubkey, // longest subkey name length
-    cchMaxClass, // longest class AnsiString length
-    cValues, // number of value entries
-    cchMaxValueName, // longest value name length
-    cbMaxValueData, // longest value data length
-    cbSecurityDescriptor: DWORD; // security descriptor length
-    ftLastWriteTime: TFileTime; // last write time
-  begin
-    Key := OpenRegKeyEx(CBase, KEY_QUERY_VALUE or KEY_ENUMERATE_SUB_KEYS);
     BufSize := ClassBufSize;
-    ec := RegQueryInfoKeyA(Key, // handle of key to query
-      @(Buf[0]), @BufSize, nil, @cSubKeys, @cchMaxSubkey, @cchMaxClass,
-      @cValues, @cchMaxValueName, @cbMaxValueData, @cbSecurityDescriptor,
+    ec := RegEnumKeyExA(Key, i, Buf, BufSize, nil, nil,
+      // address of buffer for class AnsiString
+      nil, // address for size of class buffer
       @ftLastWriteTime);
     if ec <> ERROR_SUCCESS then
+      Continue;
+    SetString(s, Buf, BufSize);
+    SubKey := OpenRegKey(CBase + '\' + s);
+    if SubKey = INVALID_REGISTRY_KEY then
+      Continue;
+    z := ReadRegString(SubKey, SubName);
+    RegCloseKey(SubKey);
+    if Swap then
     begin
-      RegCloseKey(Key);
-      Exit
+      T := s;
+      s := z;
+      z := T;
     end;
-    for i := 0 to cSubKeys - 1 do
-    begin
-      BufSize := ClassBufSize;
-      ec := RegEnumKeyExA(Key, i, Buf, BufSize, nil, nil,
-        // address of buffer for class AnsiString
-        nil, // address for size of class buffer
-        @ftLastWriteTime);
-      if ec <> ERROR_SUCCESS then
-        Continue;
-      SetString(s, Buf, BufSize);
-      SubKey := OpenRegKey(CBase + '\' + s);
-      if SubKey = INVALID_REGISTRY_KEY then
-        Continue;
-      z := ReadRegString(SubKey, SubName);
-      RegCloseKey(SubKey);
-      if Swap then
-      begin
-        T := s;
-        s := z;
-        z := T;
-      end;
-      z := LowerCase(CopyLeft(z, 2));
-      if (z = '') or (s = '') then
-        Continue;
-      if ContentTypes.Search(@z, ec) then
-        Continue;
-      r := TContentType.Create;
-      r.ContentType := s;
-      r.Extension := z;
-      ContentTypes.AtInsert(ec, r);
-    end;
-    RegCloseKey(Key);
+    z := LowerCase(CopyLeft(z, 2));
+    if (z = '') or (s = '') then
+      Continue;
+    if ContentTypes.Search(@z, ec) then
+      Continue;
+    r := TContentType.Create;
+    r.ContentType := s;
+    r.Extension := z;
+    ContentTypes.AtInsert(ec, r);
+  end;
+  RegCloseKey(Key);
+end;
+
+type
+  TAdrB = packed record
+    a, b, c, d: Byte;
   end;
 
-  type
-    TAdrB = packed record
-      a, b, c, d: Byte;
-    end;
-
-  function Adr2IntGet(const s: AnsiString; var CPos: Integer;
-    var Error: Boolean): Byte;
-  var
-    c: AnsiChar;
-    r: Integer;
-    err: Boolean;
+function Adr2IntGet(const s: AnsiString; var CPos: Integer;
+  var Error: Boolean): Byte;
+var
+  c: AnsiChar;
+  r: Integer;
+  err: Boolean;
+begin
+  Result := 0;
+  if Error then
+    Exit;
+  err := False;
+  r := Ord(s[CPos]) - 48;
+  Inc(CPos);
+  c := s[CPos];
+  if (c >= '0') and (c <= '9') then
   begin
-    Result := 0;
-    if Error then
-      Exit;
-    err := False;
-    r := Ord(s[CPos]) - 48;
+    r := r * 10 + (Ord(c) - 48);
     Inc(CPos);
     c := s[CPos];
     if (c >= '0') and (c <= '9') then
     begin
       r := r * 10 + (Ord(c) - 48);
-      Inc(CPos);
-      c := s[CPos];
-      if (c >= '0') and (c <= '9') then
-      begin
-        r := r * 10 + (Ord(c) - 48);
-        Inc(CPos)
-      end
-      else
-        err := c <> '.';
+      Inc(CPos)
     end
     else
       err := c <> '.';
-    if (r > 255) or (err) then
-    begin
-      Error := True;
-      Exit;
-    end;
-    Inc(CPos);
-    Result := r;
-  end;
-
-  function _Adr2Int(const s: AnsiString): DWORD;
-  var
-    CPos: Integer;
-    Error: Boolean;
-    a: TAdrB;
+  end
+  else
+    err := c <> '.';
+  if (r > 255) or (err) then
   begin
-    Error := False;
-    CPos := 1;
-    a.a := Adr2IntGet(s, CPos, Error);
-    a.b := Adr2IntGet(s, CPos, Error);
-    a.c := Adr2IntGet(s, CPos, Error);
-    a.d := Adr2IntGet(s, CPos, Error);
-    if Error then
-      Result := DWORD(INADDR_NONE)
-    else
-      Result := PInteger(@a)^;
+    Error := True;
+    Exit;
   end;
+  Inc(CPos);
+  Result := r;
+end;
 
-  function Adr2Int(const s: AnsiString): Integer;
+function _Adr2Int(const s: AnsiString): DWORD;
+var
+  CPos: Integer;
+  Error: Boolean;
+  a: TAdrB;
+begin
+  Error := False;
+  CPos := 1;
+  a.a := Adr2IntGet(s, CPos, Error);
+  a.b := Adr2IntGet(s, CPos, Error);
+  a.c := Adr2IntGet(s, CPos, Error);
+  a.d := Adr2IntGet(s, CPos, Error);
+  if Error then
+    Result := DWORD(INADDR_NONE)
+  else
+    Result := PInteger(@a)^;
+end;
+
+function Adr2Int(const s: AnsiString): Integer;
+begin
+  Result := _Adr2Int(s + '.');
+end;
+
+function ParamStrAnsi(Param: Integer): AnsiString;
+begin
+  {$IFDEF FPC}
+  Result := ParamStr(Param);
+  {$ELSE}
+  Result := UnicodeStringToRawByteString(ParamStr(Param), GetACP);
+  {$ENDIF}
+end;
+
+var
+  BindPort, BindAddr: DWORD;
+  IsCGI: Boolean;
+
+function GetHomeDir: Boolean;
+var
+  s: AnsiString;
+  i: DWORD;
+begin
+  Result := False;
+  if ParamCount < 1 then
   begin
-    Result := _Adr2Int(s + '.');
+    MessageBox(0, 'Path to home directory is absent!'#13#10 + CServerName +
+      ' failed to start.', CServerName, CMB_FAILED);
+    Exit;
   end;
-
-  var
-    BindPort, BindAddr: DWORD;
-    IsCGI: Boolean;
-
-  function GetHomeDir: Boolean;
-  var
-    s: AnsiString;
-    i: DWORD;
+  ParamStr1 := ParamStrAnsi(1);
+  if ParamStr1[Length(ParamStr1)] = '\' then
+    Delete(ParamStr1, Length(ParamStr1), 1);
+  s := FindRootFile('\', IsCGI);
+  if not FileExists(s) then
   begin
-    Result := False;
-    if ParamCount < 1 then
-    begin
-      MessageBox(0, 'Path to home directory is absent!'#13#10 + CServerName +
-        ' failed to start.', CServerName, CMB_FAILED);
-      Exit;
-    end;
-    ParamStr1 := UnicodeStringToRawByteString(ParamStr(1), GetACP);
-    if ParamStr1[Length(ParamStr1)] = '\' then
-      Delete(ParamStr1, Length(ParamStr1), 1);
-    s := FindRootFile('\', IsCGI);
-    if not FileExists(s) then
-    begin
-      s := 'Access to "' + s + '" failed'#13#10'Reason: "' +
-        SysErrorMsg(GetLastError) + '"'#13#10#13#10 + CServerName +
-        ' failed to start';
-      MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
-      Exit;
-    end;
-    BindPort := 80;
-    BindAddr := _INADDR_ANY;
-    if ParamCount > 1 then
-    begin
-      i := Vl(UnicodeStringToRawByteString(ParamStr(2), GetACP));
-      if i <> INVALID_VALUE then
-        BindPort := i;
-    end;
-    if ParamCount > 2 then
-    begin
-      i := Adr2Int(UnicodeStringToRawByteString(ParamStr(3), GetACP));
-      if i <> INVALID_VALUE then
-        BindAddr := i;
-    end;
-    Result := True;
+    s := 'Access to "' + s + '" failed'#13#10'Reason: "' +
+      SysErrorMsg(GetLastError) + '"'#13#10#13#10 + CServerName +
+      ' failed to start';
+    MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
+    Exit;
   end;
-
-  procedure ReadContentTypes;
+  BindPort := 80;
+  BindAddr := _INADDR_ANY;
+  if ParamCount > 1 then
   begin
-    ContentTypes := TContentTypeColl.Create;
-    GetContentTypes('SOFTWARE\Classes\MIME\Database\Content Type',
-      'Extension', False);
-    GetContentTypes('SOFTWARE\Classes', 'Content Type', True);
+    i := Vl(ParamStrAnsi(2));
+    if i <> INVALID_VALUE then
+      BindPort := i;
   end;
+  if ParamCount > 2 then
+  begin
+    i := Adr2Int(ParamStrAnsi(3));
+    if i <> INVALID_VALUE then
+      BindAddr := i;
+  end;
+  Result := True;
+end;
+
+procedure ReadContentTypes;
+begin
+  ContentTypes := TContentTypeColl.Create;
+  GetContentTypes('SOFTWARE\Classes\MIME\Database\Content Type',
+    'Extension', False);
+  GetContentTypes('SOFTWARE\Classes', 'Content Type', True);
+end;
 
 {$IFDEF LOGGING}
 
-  procedure InitLogs;
-  begin
-    FAccessLog := 'access_log';
-    FAgentLog := 'agent_log';
-    FErrorLog := 'error_log';
-    FRefererLog := 'referer_log';
-    if not _LogOK(FAccessLog, HAccessLog) or not _LogOK(FAgentLog, HAgentLog) or
-      not _LogOK(FErrorLog, HErrorLog) or not _LogOK(FRefererLog, HRefererLog)
-    then
-      GlobalFail;
-    InitializeCriticalSection(CSAccessLog);
-    InitializeCriticalSection(CSAgentLog);
-    InitializeCriticalSection(CSErrorLog);
-    InitializeCriticalSection(CSRefererLog);
-  end;
+procedure InitLogs;
+begin
+  FAccessLog := 'access_log';
+  FAgentLog := 'agent_log';
+  FErrorLog := 'error_log';
+  FRefererLog := 'referer_log';
+  if not _LogOK(FAccessLog, HAccessLog) or not _LogOK(FAgentLog, HAgentLog) or
+    not _LogOK(FErrorLog, HErrorLog) or not _LogOK(FRefererLog, HRefererLog)
+  then
+    GlobalFail;
+  InitializeCriticalSection(CSAccessLog);
+  InitializeCriticalSection(CSAgentLog);
+  InitializeCriticalSection(CSErrorLog);
+  InitializeCriticalSection(CSRefererLog);
+  AccessLogFlusher := TFileFlusherThread.Create(HAccessLog, @CSAccessLog);
+  AccessLogFlusher.Priority := tpLower;
+  AccessLogFlusher.Suspended := False;
+  AgentLogFlusher := TFileFlusherThread.Create(HAgentLog, @CSAgentLog);
+  AgentLogFlusher.Priority := tpLower;
+  AgentLogFlusher.Suspended := False;
+  ErrorLogFlusher := TFileFlusherThread.Create(HErrorLog, @CSErrorLog);
+  ErrorLogFlusher.Priority := tpLower;
+  ErrorLogFlusher.Suspended := False;
+  RefererLogFlusher := TFileFlusherThread.Create(HRefererLog, @CSRefererLog);
+  RefererLogFlusher.Priority := tpLower;
+  RefererLogFlusher.Suspended := False;
+end;
 {$ENDIF}
 
-  procedure InitReseterThread;
+procedure InitReseterThread;
+begin
+  SocketsColl := TColl.Create;
+  ResetterThread := TResetterThread.Create;
+  ResetterThread.Suspended := False;
+end;
+
+procedure FreeDummyLibraries;
+var
+  i: Integer;
+begin
+  i := GetModuleHandle('OleAut32');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('Ole32');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('RPCRT4');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('AdvAPI32');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('GDI32');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('COMCTL32');
+  if i <> 0 then
+    FreeLibrary(i);
+  i := GetModuleHandle('USER32');
+  if i <> 0 then
+    FreeLibrary(i);
+end;
+
+
+type
+  TSetProcessWorkingSetSizeFunc = function(hProcess: THandle;
+    dwMinimumWorkingSetSize, dwMaximumWorkingSetSize: SIZE_T): BOOL; stdcall;
+
+var
+  FSetProcessWorkingSetSize: TSetProcessWorkingSetSizeFunc;
+
+procedure FreeWorkingSetMemory;
+var
+  P: Pointer;
+begin
+  if not Assigned(FSetProcessWorkingSetSize) then
   begin
-    SocketsColl := TColl.Create;
-    ResetterThread := TResetterThread.Create;
+    P := GetProcAddress(GetModuleHandle(kernel32), 'SetProcessWorkingSetSize');
+    FSetProcessWorkingSetSize := TSetProcessWorkingSetSizeFunc(P);
+  end;
+  if Assigned(FSetProcessWorkingSetSize) then
+  begin
+    FSetProcessWorkingSetSize(GetCurrentProcess, SIZE_T(-1), SIZE_T(-1));
+  end;
+end;
+
+type
+  TWndMethod = procedure(var Message: TMessage) of object;
+
+const
+  InstanceCount = 313;
+
+  { Object instance management }
+
+type
+  PObjectInstance = ^TObjectInstance;
+
+  TObjectInstance = packed record
+    Code: Byte;
+    Offset: Integer;
+    case Integer of
+      0:
+        (Next: PObjectInstance);
+      1:
+        (Method: TWndMethod);
   end;
 
-  procedure FreeDummyLibraries;
-  var
-    i: Integer;
-  begin
-    i := GetModuleHandle('OleAut32');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('Ole32');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('RPCRT4');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('AdvAPI32');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('GDI32');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('COMCTL32');
-    if i <> 0 then
-      FreeLibrary(i);
-    i := GetModuleHandle('USER32');
-    if i <> 0 then
-      FreeLibrary(i);
+type
+  PInstanceBlock = ^TInstanceBlock;
+
+  TInstanceBlock = packed record
+    Next: PInstanceBlock;
+    Code: array [1 .. 2] of Byte;
+    WndProcPtr: Pointer;
+    Instances: array [0 .. InstanceCount] of TObjectInstance;
   end;
 
-  type
-    TWndMethod = procedure(var Message: TMessage) of object;
-
-  const
-    InstanceCount = 313;
-
-    { Object instance management }
-
-  type
-    PObjectInstance = ^TObjectInstance;
-
-    TObjectInstance = packed record
-      Code: Byte;
-      Offset: Integer;
-      case Integer of
-        0:
-          (Next: PObjectInstance);
-        1:
-          (Method: TWndMethod);
-    end;
-
-  type
-    PInstanceBlock = ^TInstanceBlock;
-
-    TInstanceBlock = packed record
-      Next: PInstanceBlock;
-      Code: array [1 .. 2] of Byte;
-      WndProcPtr: Pointer;
-      Instances: array [0 .. InstanceCount] of TObjectInstance;
-    end;
-
-  var
-    InstBlockList: PInstanceBlock;
-    InstFreeList: PObjectInstance;
+var
+  InstBlockList: PInstanceBlock;
+  InstFreeList: PObjectInstance;
 
 {$IFDEF FPC}
 {$ASMMODE Intel}
 {$ENDIF}
-    { Standard window procedure }
-    { In    ECX = Address of method pointer }
-    { Out   EAX = Result }
+  { Standard window procedure }
+  { In    ECX = Address of method pointer }
+  { Out   EAX = Result }
 
-  function StdWndProc(Window: HWND; Message, WParam: Longint; LParam: Longint)
-    : Longint; stdcall; assembler;
-  asm
-    XOR     EAX,EAX
-    PUSH    EAX
-    PUSH    LParam
-    PUSH    WParam
-    PUSH    Message
-    MOV     EDX,ESP
-    MOV     EAX,[ECX].Longint[4]
-    CALL    [ECX].Pointer
-    ADD     ESP,12
-    POP     EAX
-  end;
+function StdWndProc(Window: HWND; Message, WParam: Longint; LParam: Longint)
+  : Longint; stdcall; assembler;
+asm
+  XOR     EAX,EAX
+  PUSH    EAX
+  PUSH    LParam
+  PUSH    WParam
+  PUSH    Message
+  MOV     EDX,ESP
+  MOV     EAX,[ECX].Longint[4]
+  CALL    [ECX].Pointer
+  ADD     ESP,12
+  POP     EAX
+end;
 
-  { Allocate an object instance }
+{ Allocate an object instance }
 
-  function CalcJmpOffset(Src, Dest: Pointer): Longint;
+function CalcJmpOffset(Src, Dest: Pointer): NativeInt;
+var
+  sofs, dofs: Int64;
+begin
+  sofs := NativeUInt(Dest);
+  dofs := NativeUInt(Src);
+  Result := sofs - (dofs + 5);
+end;
+
+function MakeObjectInstance(Method: TWndMethod): Pointer;
+const
+  BlockCode: array [1 .. 2] of Byte = ($59, { POP ECX }
+    $E9); { JMP StdWndProc }
+  PageSize = 4096;
+var
+  Block: PInstanceBlock;
+  Instance: PObjectInstance;
+begin
+  if InstFreeList = nil then
   begin
-    Result := Longint(Dest) - (Longint(Src) + 5);
-  end;
-
-  function MakeObjectInstance(Method: TWndMethod): Pointer;
-  const
-    BlockCode: array [1 .. 2] of Byte = ($59, { POP ECX }
-      $E9); { JMP StdWndProc }
-    PageSize = 4096;
-  var
-    Block: PInstanceBlock;
-    Instance: PObjectInstance;
-  begin
-    if InstFreeList = nil then
-    begin
-      Block := VirtualAlloc(nil, PageSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-      Block^.Next := InstBlockList;
-      Move(BlockCode, Block^.Code, SizeOf(BlockCode));
-      Block^.WndProcPtr := Pointer(CalcJmpOffset(@Block^.Code[2], @StdWndProc));
-      Instance := @(Block^.Instances[0]);
-      repeat
-        Instance^.Code := $E8; { CALL NEAR PTR Offset }
-        Instance^.Offset := CalcJmpOffset(Instance, @Block^.Code);
-        Instance^.Next := InstFreeList;
-        InstFreeList := Instance;
-        Inc(Longint(Instance), SizeOf(TObjectInstance));
-      until Longint(Instance) - Longint(Block) >= SizeOf(TInstanceBlock);
-      InstBlockList := Block;
-    end;
-    Result := InstFreeList;
-    Instance := InstFreeList;
-    InstFreeList := Instance^.Next;
-    Instance^.Method := Method;
-  end;
-
-  { Free an object instance }
-
-  procedure FreeObjectInstance(ObjectInstance: Pointer);
-  begin
-    if ObjectInstance <> nil then
-    begin
-      PObjectInstance(ObjectInstance)^.Next := InstFreeList;
-      InstFreeList := ObjectInstance;
-    end;
-  end;
-
-  var
-    UtilWindowClass: TWndClass = (style: 0; lpfnWndProc: @DefWindowProc;
-      cbClsExtra: 0; cbWndExtra: 0; hInstance: 0; hIcon: 0; hCursor: 0;
-      hbrBackground: 0; lpszMenuName: nil; lpszClassName: 'TPUtilWindow');
-
-  function AllocateHWnd(Method: TWndMethod): HWND;
-  var
-    TempClass: TWndClass;
-    ClassRegistered: Boolean;
-  begin
-    UtilWindowClass.hInstance := hInstance;
-    UtilWindowClass.lpfnWndProc := @DefWindowProc;
-    ClassRegistered := GetClassInfo(hInstance, UtilWindowClass.lpszClassName,
-      TempClass);
-    if not ClassRegistered or ({$IFDEF FPC_DELPHI}@{$ENDIF}TempClass.lpfnWndProc
-      <> @DefWindowProc) then
-    begin
-      if ClassRegistered then
-        Windows.UnregisterClass(UtilWindowClass.lpszClassName, hInstance);
-      Windows.RegisterClass(UtilWindowClass);
-    end;
-    Result := CreateWindowEx(WS_EX_TOOLWINDOW, UtilWindowClass.lpszClassName,
-      '', WS_POPUP { !0 } , 0, 0, 0, 0, 0, 0, hInstance, nil);
-    if Assigned(Method) then
-      SetWindowLong(Result, GWL_WNDPROC, Longint(MakeObjectInstance(Method)));
-  end;
-
-  procedure DeallocateHWnd(Wnd: HWND);
-  var
-    DefAddr, Instance: Pointer;
-  begin
-    Instance := Pointer(GetWindowLong(Wnd, GWL_WNDPROC));
-    DestroyWindow(Wnd);
-    DefAddr := @DefWindowProc;
-    if Instance <> DefAddr then
-      FreeObjectInstance(Instance);
-  end;
-
-  type
-    TWndProc = class
-      Handle: THandle;
-      procedure WndProc(var M: TMessage);
-      destructor Destroy; override;
-    end;
-
-  destructor TWndProc.Destroy;
-  begin
-    DeallocateHWnd(Handle);
-    inherited Destroy;
-  end;
-
-  var
-    Leave: Boolean;
-
-  procedure TWndProc.WndProc(var M: TMessage);
-  begin
-    if M.Msg = WM_QUIT then
-      Leave := True;
-    M.Result := DefWindowProc(Handle, M.Msg, M.WParam, M.LParam);
-  end;
-
-  type
-    TMainThread = class(TThread)
-      procedure Execute; override;
-    end;
-
-  var
-    ServerSocketHandle: WinSock.TSocket;
-
-  procedure MainLoop;
-  var
-    j, err: Integer;
-    NewSocketHandle: WinSock.TSocket;
-    NewSocket: TSocket;
-    NewThread: THTTPServerThread;
-    WData: TWSAData;
-    Addr: TSockAddr;
-    s: AnsiString;
-  begin
-    Leave := False;
-    err := WSAStartup(MakeWord(1, 1), WData);
-    if err <> 0 then
-    begin
-      s := 'Failed to initialize WinSocket,error #' + ItoS(err);
-      MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
-      Halt;
-    end;
-    ServerSocketHandle := Socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if ServerSocketHandle = INVALID_SOCKET then
-    begin
-      s := 'Failed to create a socket, Error #' + ItoS(WSAGetLastError);
-      MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
-      Halt;
-    end;
-
-    Addr.sin_family := AF_INET;
-    Addr.sin_port := htons(BindPort);
-    Addr.sin_addr.s_addr := BindAddr;
-    if bind(ServerSocketHandle, Addr, SizeOf(Addr)) = SOCKET_ERROR then
-    begin
-      MessageBeep(MB_ICONEXCLAMATION);
-{$IFDEF LOGGING}
-      AddErrorLog('Failed to bind the socket, port #' + ItoS(BindPort) +
-        ', address=' + AddrInet(BindAddr) + ', error #' + ItoS(WSAGetLastError)
-        + '.'#13#10#13#10 +
-        'Probable reason is that another daemon is already running on the same port ('
-        + ItoS(BindPort) + ').');
-{$ENDIF}
-      Halt;
-    end;
-
-    InitReseterThread;
-
-    listen(ServerSocketHandle, 100);
-
-    FreeDummyLibraries;
-
+    Block := VirtualAlloc(nil, PageSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    Block^.Next := InstBlockList;
+    Move(BlockCode, Block^.Code, SizeOf(BlockCode));
+    Block^.WndProcPtr := Pointer(CalcJmpOffset(@Block^.Code[2], @StdWndProc));
+    Instance := @(Block^.Instances[0]);
     repeat
-      j := SizeOf(Addr);
+      Instance^.Code := $E8; { CALL NEAR PTR Offset }
+      Instance^.Offset := CalcJmpOffset(Instance, @Block^.Code);
+      Instance^.Next := InstFreeList;
+      InstFreeList := Instance;
+      Inc(NativeInt(Instance), SizeOf(TObjectInstance));
+    until Int64(NativeUInt(Instance)) - Int64(NativeUInt(Block)) >= SizeOf(TInstanceBlock);
+    InstBlockList := Block;
+  end;
+  Result := InstFreeList;
+  Instance := InstFreeList;
+  InstFreeList := Instance^.Next;
+  Instance^.Method := Method;
+end;
+
+{ Free an object instance }
+
+procedure FreeObjectInstance(ObjectInstance: Pointer);
+begin
+  if ObjectInstance <> nil then
+  begin
+    PObjectInstance(ObjectInstance)^.Next := InstFreeList;
+    InstFreeList := ObjectInstance;
+  end;
+end;
+
+var
+  UtilWindowClass: TWndClass = (
+    style: 0;
+    lpfnWndProc: @DefWindowProc;
+    cbClsExtra: 0;
+    cbWndExtra: 0;
+    hInstance: 0;
+    hIcon: 0;
+    hCursor: 0;
+    hbrBackground: 0;
+    lpszMenuName: nil;
+    lpszClassName: 'TPUtilWindow'
+  );
+
+function AllocateHWnd(Method: TWndMethod): HWND;
+var
+  TempClass: TWndClass;
+  ClassRegistered: Boolean;
+begin
+  UtilWindowClass.hInstance := hInstance;
+  UtilWindowClass.lpfnWndProc := @DefWindowProc;
+  FillChar(TempClass, SizeOf(TempClass), 0);
+  ClassRegistered := GetClassInfo(hInstance, UtilWindowClass.lpszClassName,
+    TempClass);
+  if not ClassRegistered or ({$IFDEF FPC_DELPHI}@{$ENDIF}TempClass.lpfnWndProc
+    <> @DefWindowProc) then
+  begin
+    if ClassRegistered then
+      Windows.UnregisterClass(UtilWindowClass.lpszClassName, hInstance);
+    Windows.RegisterClass(UtilWindowClass);
+  end;
+  Result := CreateWindowEx(WS_EX_TOOLWINDOW, UtilWindowClass.lpszClassName,
+    '', WS_POPUP { !0 } , 0, 0, 0, 0, 0, 0, hInstance, nil);
+  if Assigned(Method) then
+    SetWindowLong(Result, GWL_WNDPROC, LONG(MakeObjectInstance(Method)));
+end;
+
+procedure DeallocateHWnd(Wnd: HWND);
+var
+  DefAddr, Instance: Pointer;
+begin
+  Instance := Pointer(GetWindowLong(Wnd, GWL_WNDPROC));
+  DestroyWindow(Wnd);
+  DefAddr := @DefWindowProc;
+  if Instance <> DefAddr then
+    FreeObjectInstance(Instance);
+end;
+
+type
+  TWndProc = class
+    Handle: THandle;
+    procedure WndProc(var M: TMessage);
+    destructor Destroy; override;
+  end;
+
+destructor TWndProc.Destroy;
+begin
+  DeallocateHWnd(Handle);
+  inherited Destroy;
+end;
+
+var
+  Leave: Boolean;
+
+procedure TWndProc.WndProc(var M: TMessage);
+begin
+  if M.Msg = WM_QUIT then
+    Leave := True;
+  M.Result := DefWindowProc(Handle, M.Msg, M.WParam, M.LParam);
+end;
+
+type
+  TMainThread = class(TThread)
+    procedure Execute; override;
+  end;
+
+var
+  ServerSocketHandle: WinSock.TSocket;
+
+procedure MainLoop;
+var
+  j, err: Integer;
+  NewSocketHandle: WinSock.TSocket;
+  NewSocket: TSocket;
+  NewThread: THTTPServerThread;
+  WData: TWSAData;
+  Addr: TSockAddr;
+  s: AnsiString;
+begin
+  Leave := False;
+  FillChar(WData, SizeOf(WData), 0);
+  err := WSAStartup(MakeWord(1, 1), WData);
+  if err <> 0 then
+  begin
+    s := 'Failed to initialize WinSocket,error #' + ItoS(err);
+    MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
+    Halt;
+  end;
+  ServerSocketHandle := Socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if ServerSocketHandle = INVALID_SOCKET then
+  begin
+    s := 'Failed to create a socket, Error #' + ItoS(WSAGetLastError);
+    MessageBoxA(0, @(s[1]), CServerName, CMB_FAILED);
+    Halt;
+  end;
+
+  Addr.sin_family := AF_INET;
+  Addr.sin_port := htons(BindPort);
+  Addr.sin_addr.s_addr := BindAddr;
+  if bind(ServerSocketHandle, Addr, SizeOf(Addr)) = SOCKET_ERROR then
+  begin
+    MessageBeep(MB_ICONEXCLAMATION);
+{$IFDEF LOGGING}
+    AddErrorLog('Failed to bind the socket, port #' + ItoS(BindPort) +
+      ', address=' + AddrInet(BindAddr) + ', error #' + ItoS(WSAGetLastError)
+      + '.'#13#10#13#10 +
+      'Probable reason is that another daemon is already running on the same port ('
+      + ItoS(BindPort) + ').');
+{$ENDIF}
+    Halt;
+  end;
+
+  InitReseterThread;
+
+  listen(ServerSocketHandle, 100);
+
+  FreeDummyLibraries;
+  FreeWorkingSetMemory;
+
+  repeat
+    j := SizeOf(Addr);
 {$IFDEF VER90}
-      NewSocketHandle := Accept(ServerSocketHandle, Addr, j);
+    NewSocketHandle := Accept(ServerSocketHandle, Addr, j);
 {$ELSE}
-      NewSocketHandle := Accept(ServerSocketHandle, @Addr, @j);
+    NewSocketHandle := Accept(ServerSocketHandle, @Addr, @j);
 {$ENDIF}
-      if NewSocketHandle = INVALID_SOCKET then
-        Break;
+    if NewSocketHandle = INVALID_SOCKET then
+      Break;
 
-      if Leave then
-        Break;
+    if Leave then
+      Break;
 
-      NewSocket := TSocket.Create;
-      NewSocket.Handle := NewSocketHandle;
-      NewSocket.FAddr := Addr.sin_addr.s_addr;
-      NewSocket.FPort := Addr.sin_port;
-      if not NewSocket.Startup then
-        FreeObject(NewSocket)
-      else
+    NewSocket := TSocket.Create;
+    NewSocket.Handle := NewSocketHandle;
+    NewSocket.FAddr := Addr.sin_addr.s_addr;
+    NewSocket.FPort := Addr.sin_port;
+    if not NewSocket.Startup then
+      FreeObject(NewSocket)
+    else
+    begin
+      SocketsColl.Enter;
+      if SocksCount = 0 then
       begin
-        SocketsColl.Enter;
-        if SocksCount = 0 then
-        begin
-          ResetterThread.TimeToSleep := SleepQuant;
-          SetEvent(ResetterThread.oSleep);
-        end;
-        Inc(SocksCount);
-        SocketsColl.Leave;
-        NewThread := THTTPServerThread.Create;
-        NewThread.FreeOnTerminate := True;
-        NewThread.Socket := NewSocket;
-        NewSocket.RegisterSelf;
-        NewThread.Resume;
+        ResetterThread.TimeToSleep := SleepQuant;
+        SetEvent(ResetterThread.oSleep);
       end;
-    until False;
-    if ServerSocketHandle <> INVALID_SOCKET then
-      CloseSocket(ServerSocketHandle);
-  end;
-
-  procedure MessageLoop;
-  var
-    M: TMsg;
-    WP: TWndProc;
-  begin
-    WP := TWndProc.Create;
-    WP.Handle := AllocateHWnd({$IFDEF FPC_OBJFPC}@{$ENDIF}WP.WndProc);
-    repeat
-      GetMessage(M, 0, 0, 0);
-      if M.Message = WM_QUIT then
-      begin
-        Leave := True;
-        Break;
-      end;
-      TranslateMessage(M);
-      DispatchMessage(M);
-    until Leave;
-    WP.Free;
-  end;
-
-  procedure ComeOn;
-  var
-    i: Integer;
-    MainThread: TMainThread;
-  begin
-
-    // --- Set Hight priority class
-    // SetPriorityClass(GetCurrentProcess, HIGH_PRIORITY_CLASS);
-
-{$IFDEF ODBC}
-    InitializeCriticalSection(OdbcCS);
-{$ENDIF}
-    // --- Initialize xBase Module
-    xBaseInit;
-
-    ExecutableCache := TExecutableCacheColl.Create;
-    ExecutableCache.Enter;
-    ExecutableCache.Leave;
-
-    RootCacheColl := TRootCacheColl.Create;
-    RootCacheColl.Enter;
-    RootCacheColl.Leave;
-
-    // --- Get and validate a home directory
-    if not GetHomeDir then
-      Exit;
-
-    // --- Read content types from registry and associate with file extensions
-    ReadContentTypes;
-
-    // --- Open log files and initialize semaphores
-{$IFDEF LOGGING}
-    InitLogs;
-{$ENDIF}
-    // --- Perform main loop
-    MainThread := TMainThread.Create(False);
-
-    MessageLoop;
-
+      Inc(SocksCount);
+      SocketsColl.Leave;
+      NewThread := THTTPServerThread.Create;
+      NewThread.FreeOnTerminate := True;
+      NewThread.Socket := NewSocket;
+      NewSocket.RegisterSelf;
+      NewThread.Resume;
+    end;
+  until False;
+  if ServerSocketHandle <> INVALID_SOCKET then
     CloseSocket(ServerSocketHandle);
-    ServerSocketHandle := INVALID_SOCKET;
+end;
 
-    MainThread.Terminate;
-    WaitForSingleObject(MainThread.Handle, INFINITE);
-    MainThread.Free;
+procedure MessageLoop;
+var
+  M: TMsg;
+  WP: TWndProc;
+begin
+  WP := TWndProc.Create;
+  WP.Handle := AllocateHWnd({$IFDEF FPC_OBJFPC}@{$ENDIF}WP.WndProc);
+  repeat
+    FillChar(M, SizeOf(M), 0);
+    GetMessage(M, 0, 0, 0);
+    case
+      M.Message of
+        0,
+        WM_QUIT:
+        begin
+          Leave := True;
+          Break;
+        end;
+      else
+        begin
+          TranslateMessage(M);
+          DispatchMessage(M);
+        end;
+    end;
+  until Leave;
+  WP.Free;
+end;
 
-
-    // Non-debug version never exits :-)
-
-    ResetterThread.Terminate;
-    SetEvent(ResetterThread.oSleep);
-    SocketsColl.Enter;
-    for i := 0 to SocketsColl.Count - 1 do
-      shutdown(TSocket(SocketsColl[i]).Handle, 2);
-    SocketsColl.Leave;
-    while SocketsColl.Count > 0 do
-      Sleep(1000);
-    ResetterThread.TimeToSleep := SleepQuant;
-    SetEvent(ResetterThread.oSleep);
-    WaitForSingleObject(ResetterThread.Handle, INFINITE);
-    FreeObject(ResetterThread);
-    FreeObject(SocketsColl);
-    FreeObject(ContentTypes);
-    xBaseDone;
-{$IFDEF LOGGING}
-    CloseHandle(HAccessLog);
-    CloseHandle(HAgentLog);
-    CloseHandle(HErrorLog);
-    CloseHandle(HRefererLog);
-    DeleteCriticalSection(CSAccessLog);
-    DeleteCriticalSection(CSAgentLog);
-    DeleteCriticalSection(CSErrorLog);
-    DeleteCriticalSection(CSRefererLog);
+procedure ComeOn;
+var
+  i: Integer;
+  MainThread: TMainThread;
+begin
+{$IFDEF ODBC}
+  InitializeCriticalSection(OdbcCS);
 {$ENDIF}
-  end;
+  // --- Initialize xBase Module
+  {$IFDEF DEBUG}
+  xBaseSelfTest;
+  {$ENDIF}
 
-  { TMsgThread }
+  xBaseInit;
 
-  { TMainThread }
+  ExecutableCache := TExecutableCacheColl.Create;
+  ExecutableCache.Enter;
+  ExecutableCache.Leave;
 
-  procedure TMainThread.Execute;
-  begin
-    MainLoop;
-  end;
+  RootCacheColl := TRootCacheColl.Create;
+  RootCacheColl.Enter;
+  RootCacheColl.Leave;
+
+  // --- Get and validate a home directory
+  if not GetHomeDir then
+    Exit;
+
+  // --- Read content types from registry and associate with file extensions
+  ReadContentTypes;
+
+  // --- Open log files and initialize semaphores
+{$IFDEF LOGGING}
+  InitLogs;
+{$ENDIF}
+  // --- Perform main loop
+  MainThread := TMainThread.Create(True);
+  MainThread.Suspended := False;
+
+  MessageLoop;
+
+  // Non-debug version never exits :-)
+
+
+{$IFDEF LOGGING}
+  AccessLogFlusher.Priority := tpHigher; // to make it terminate faster
+  AccessLogFlusher.Terminate;
+  AccessLogFlusher.Signal;
+  AgentLogFlusher.Priority := tpHigher;
+  AgentLogFlusher.Terminate;
+  AgentLogFlusher.Signal;
+  ErrorLogFlusher.Priority := tpHigher;
+  ErrorLogFlusher.Terminate;
+  ErrorLogFlusher.Signal;
+  RefererLogFlusher.Priority := tpHigher;
+  RefererLogFlusher.Terminate;
+  RefererLogFlusher.Signal;
+{$ENDIF}
+
+  CloseSocket(ServerSocketHandle);
+  ServerSocketHandle := INVALID_SOCKET;
+
+  MainThread.Terminate;
+  MainThread.WaitFor;
+  FreeObject(MainThread);
+
+  ResetterThread.Terminate;
+  SetEvent(ResetterThread.oSleep);
+  SocketsColl.Enter;
+  for i := 0 to SocketsColl.Count - 1 do
+    shutdown(TSocket(SocketsColl[i]).Handle, 2);
+  SocketsColl.Leave;
+  while SocketsColl.Count > 0 do
+    Sleep(1000);
+  ResetterThread.TimeToSleep := SleepQuant;
+  SetEvent(ResetterThread.oSleep);
+  WaitForSingleObject(ResetterThread.Handle, INFINITE);
+  FreeObject(ResetterThread);
+  FreeObject(SocketsColl);
+  FreeObject(ContentTypes);
+  xBaseDone;
+{$IFDEF LOGGING}
+  AccessLogFlusher.WaitFor;
+  FreeObject(AccessLogFlusher);
+  AgentLogFlusher.WaitFor;
+  FreeObject(AgentLogFlusher);
+  ErrorLogFlusher.WaitFor;
+  FreeObject(ErrorLogFlusher);
+  RefererLogFlusher.WaitFor;
+  FreeObject(RefererLogFlusher);
+  CloseHandle(HAccessLog);
+  CloseHandle(HAgentLog);
+  CloseHandle(HErrorLog);
+  CloseHandle(HRefererLog);
+  DeleteCriticalSection(CSAccessLog);
+  DeleteCriticalSection(CSAgentLog);
+  DeleteCriticalSection(CSErrorLog);
+  DeleteCriticalSection(CSRefererLog);
+{$ENDIF}
+end;
+
+{ TMsgThread }
+
+{ TMainThread }
+
+procedure TMainThread.Execute;
+begin
+  MainLoop;
+end;
 
 end.
